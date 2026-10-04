@@ -156,6 +156,7 @@ def main() -> int:
     ap.add_argument("--steps", type=int, default=20_000)
     ap.add_argument("--device", default=None)
     ap.add_argument("--skip-training", action="store_true")
+    ap.add_argument("--no-figures", action="store_true")
     args = ap.parse_args()
 
     if not args.skip_training:
@@ -243,6 +244,18 @@ def main() -> int:
     out = pathlib.Path("results/e1_representatives.json")
     out.write_text(json.dumps({str(a): r["run_id"] for a, r in reps.items()}, indent=2) + "\n")
     print(f"\nRepresentative run ids written to `{out}`.")
+
+    if not args.no_figures and 0.0 in reps and 1.0 in reps:
+        from clockpizza import plots
+
+        pizza, _ = load_run(reps[0.0]["run_id"])
+        clock, _ = load_run(reps[1.0]["run_id"])
+        print("\n## Figures\n")
+        print("| figure | file |")
+        print("| --- | --- |")
+        for key, path in sorted(plots.all_e1_figures(pizza, clock).items()):
+            print(f"| {key} | `{path}` |")
+
     return 1 if failed else 0
 
 
