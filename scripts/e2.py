@@ -22,7 +22,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
 from clockpizza import plots  # noqa: E402
 from clockpizza.sweeps import e2_configs, run as run_sweep  # noqa: E402
-from clockpizza.summary import fmt_dist, iqr  # noqa: E402
+from clockpizza.summary import Targets, fmt_dist, iqr, print_figures  # noqa: E402
 from clockpizza.train import load_registry, load_run  # noqa: E402
 
 EXPERIMENT = "E2"
@@ -65,14 +65,13 @@ def main() -> int:
         print("*No E2 runs in the registry yet; nothing to analyse.*")
         return 0
 
-    failures: list[str] = []
-    targets: list[tuple[str, str, str, str, str, bool]] = []
+    targets = Targets()
 
     # ------------------------------------------------------------------------- T5
     share = 100 * len(circular) / len(perfect) if perfect else float("nan")
-    ok = 20 <= share <= 50
-    targets.append(("T5", "share of 100%-validation runs that are circular", "34.31%",
-                    f"{share:.2f}% ({len(circular)}/{len(perfect)})", "20-50%", ok))
+    targets.record("T5", "share of 100%-validation runs that are circular", "34.31%",
+                   f"{share:.2f}% ({len(circular)}/{len(perfect)})", "20-50%",
+                   20 <= share <= 50)
 
     # ------------------------------------------------------------------------ T13
     alpha = np.array([r["config"]["attn_coeff"] for r in circular])
@@ -104,9 +103,9 @@ def main() -> int:
     if gs_b is not None and di_b is not None:
         ok13 = (abs(gs_b - RELEASED_GS_BOUNDARY) <= BOUNDARY_TOLERANCE
                 and abs(di_b - RELEASED_DI_BOUNDARY) <= BOUNDARY_TOLERANCE)
-        targets.append(("T13", "d = 128 phase boundary alpha*", "~0.5 (Fig. 7)",
-                        f"GS {gs_b:.2f}, DI {di_b:.2f}",
-                        f"within 0.15 of {RELEASED_GS_BOUNDARY} / {RELEASED_DI_BOUNDARY}", ok13))
+        targets.record("T13", "d = 128 phase boundary alpha*", "~0.5 (Fig. 7)",
+                       f"GS {gs_b:.2f}, DI {di_b:.2f}",
+                       f"within 0.15 of {RELEASED_GS_BOUNDARY} / {RELEASED_DI_BOUNDARY}", ok13)
 
     # ------------------------------------------------- reference distribution table
     print("\n## Distributions by alpha, against the released run table\n")
@@ -127,21 +126,9 @@ def main() -> int:
               f"| {gs_ref} ({gs_iqr_ref}) | {st.median(di_v):.2f} ({dl:.2f}-{dh:.2f}) "
               f"| {di_ref} ({di_iqr_ref}) | {pct:.0f}% / {share_ref}% |")
 
-    # ------------------------------------------------------------------- the targets
-    print("\n## Targets\n")
-    print("| ID | quantity | paper | ours | band | verdict |")
-    print("| --- | --- | --- | --- | --- | --- |")
-    for tid, quantity, paper, got, band, ok in targets:
-        if not ok:
-            failures.append(tid)
-        print(f"| {tid} | {quantity} | {paper} | {got} | {band} "
-              f"| {'**pass**' if ok else '**FAIL**'} |")
-
     # ----------------------------------------------------------------------- figures
+    made = {}
     if not args.no_figures and runs:
-        print("\n## Figures\n")
-        print("| figure | file |")
-        print("| --- | --- |")
         made = {
             "fig06": plots.fig06_di_vs_gs(runs),
             "fig06_topwrong": plots.fig06_di_vs_gs(runs, di_key="di_top_wrong"),
@@ -164,11 +151,9 @@ def main() -> int:
             made["fig09"] = plots.fig09_pc_plots(models, labels)
         elif non_circular:
             print("\n*Fig. 9 skipped: weights for the non-circular runs are not on this host.*")
-        for key, path in sorted(made.items()):
-            print(f"| {key} | `{path}` |")
+        print_figures(made)
 
-    print(f"\n**{'All E2 targets in band' if not failures else 'Out of band: ' + ', '.join(failures)}.**")
-    return 1 if failures else 0
+    return targets.print("E2")
 
 
 if __name__ == "__main__":
