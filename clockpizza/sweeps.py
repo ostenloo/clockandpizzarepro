@@ -99,15 +99,22 @@ def e6_configs(n: int = 32, seed: int = 5, steps: int = 20_000,
                       experiment=experiment) for i in range(n)]
 
 
+# The paper's own panel labels (App. J-K, Fig. 22-23), kept so those panels are
+# reproducible exactly, plus later steps. On a first pass our alpha = 0 runs had not yet
+# grown their accompanying circles by step 600, so App. K's comparison had nothing to
+# remove; the extra steps let the analysis find the step where the structure exists.
+E8_CLOCK_STEPS = (90, 210, 300, 510, 840, 1200, 2000, 3000)
+E8_PIZZA_STEPS = (300, 600, 1000, 1500, 2000, 3000, 5000)
+
+
 def e8_configs(n: int = 4, steps: int = 20_000, experiment: str = "E8") -> list[RunConfig]:
-    """App. J-K / Fig. 22-23: alpha = 1 with checkpoints at steps 90, 210, 300, 510, 840,
-    and alpha = 0 with one at step 600."""
+    """App. J-K / Fig. 22-23: checkpointed runs at both attention rates."""
     out = []
     for i in range(n):
         out.append(RunConfig(seed=i, attn_coeff=1.0, steps=steps, experiment=experiment,
-                             checkpoint_steps=(90, 210, 300, 510, 840)))
+                             checkpoint_steps=E8_CLOCK_STEPS))
         out.append(RunConfig(seed=i, attn_coeff=0.0, steps=steps, experiment=experiment,
-                             checkpoint_steps=(600,)))
+                             checkpoint_steps=E8_PIZZA_STEPS))
     return out
 
 

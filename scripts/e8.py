@@ -61,45 +61,51 @@ def main() -> int:
     data = make_dataset()
     made = {}
 
-    # ------------------------------------------- App. K: the accompanying circle at step 600
+    # ------------------------------------------- App. K: removing the accompanying circle
     pizza_runs = [r for r in runs if r["config"]["attn_coeff"] == 0.0]
-    print("## App. K -- removing the accompanying circle at step 600\n")
-    print("| run | seed | all circles | main circles only | drop |")
-    print("| --- | --- | --- | --- | --- |")
+    print("## App. K -- removing the accompanying circle\n")
+    print("A drop needs an accompanying circle to remove. The paper looks at step 600; "
+          "every checkpointed step is scanned here, because a run that has not yet grown "
+          "its accompanying circles would otherwise report a drop of zero and look like "
+          "agreement.\n")
+    print("| run | seed | step | circles (main + accompanying) | all circles "
+          "| main circles only | drop |")
+    print("| --- | --- | --- | --- | --- | --- | --- |")
     for r in sorted(pizza_runs, key=lambda r: r["seed"]):
-        try:
-            model, _ = load_checkpoint(r["run_id"], 600)
-        except FileNotFoundError:
-            print(f"| `{r['run_id']}` | {r['seed']} | *checkpoint not on this host* | | |")
-            continue
-        pca = C.embedding_pca(model)
-        main, acc = C.classify_circles(C.find_circles(model, pca=pca), model, data, pca=pca)
-        if not main:
-            print(f"| `{r['run_id']}` | {r['seed']} | *no circles at step 600* | | |")
-            continue
+        for step in r["config"].get("checkpoint_steps", ()):
+            try:
+                model, _ = load_checkpoint(r["run_id"], step)
+            except FileNotFoundError:
+                continue
+            pca = C.embedding_pca(model)
+            main, acc = C.classify_circles(C.find_circles(model, pca=pca), model, data,
+                                           pca=pca)
+            if not main:
+                print(f"| `{r['run_id']}` | {r['seed']} | {step} | none | - | - | - |")
+                continue
 
-        def accuracy_of(keep):
-            with torch.no_grad():
-                return M.accuracy(C.isolated_model(model, keep, pca=pca)
-                                  .final_logits(data.inputs), data.labels) * 100
+            def accuracy_of(keep, _model=model, _pca=pca):
+                with torch.no_grad():
+                    return M.accuracy(C.isolated_model(_model, keep, pca=_pca)
+                                      .final_logits(data.inputs), data.labels) * 100
 
-        with_all = accuracy_of(C.circle_pcs(main + acc))
-        without = accuracy_of(C.circle_pcs(main))
-        print(f"| `{r['run_id']}` | {r['seed']} | {with_all:.2f}% | {without:.2f}% "
-              f"| {with_all - without:+.2f} |")
+            with_all = accuracy_of(C.circle_pcs(main + acc))
+            without = accuracy_of(C.circle_pcs(main))
+            drop = "-" if not acc else f"{with_all - without:+.2f}"
+            print(f"| `{r['run_id']}` | {r['seed']} | {step} | {len(main)} + {len(acc)} "
+                  f"| {with_all:.2f}% | {without:.2f}% | {drop} |")
     print(f"\nApp. K reports {APP_K_WITH}% falling to {APP_K_WITHOUT}% "
           f"(a drop of {APP_K_WITH - APP_K_WITHOUT:.1f} points).")
 
     # --------------------------------------------------- Fig. 22-23: isolation over time
     if not args.no_figures:
         clock_runs = [r for r in runs if r["config"]["attn_coeff"] == 1.0]
-        for tag, group, steps in (("clock", clock_runs, (90, 210, 300, 510, 840)),
-                                  ("pizza", pizza_runs, (600,))):
+        for tag, group in (("clock", clock_runs), ("pizza", pizza_runs)):
             if not group:
                 continue
             run = sorted(group, key=lambda r: r["seed"])[0]
             series = []
-            for step in steps:
+            for step in run["config"].get("checkpoint_steps", ()):
                 try:
                     model, _ = load_checkpoint(run["run_id"], step)
                 except FileNotFoundError:
