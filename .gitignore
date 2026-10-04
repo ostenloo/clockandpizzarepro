@@ -16,3 +16,6 @@ third_party/
 
 # Papers
 *.pdf
+
+# Regenerable logs
+results/*.log

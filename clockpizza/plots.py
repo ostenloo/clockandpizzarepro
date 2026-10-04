@@ -226,3 +226,100 @@ def all_e1_figures(model_pizza, model_clock, outdir=None) -> dict[str, pathlib.P
     out["fig03_clock"] = fig03_correct_logit_heatmap(model_clock, data, outdir, tag="clock")
     out["fig02_clock"] = fig02_gradient_symmetry(model_clock, outdir=outdir, tag="clock")
     return out
+
+
+# ------------------------------------------------- Fig. 6 / 7 / 10: sweeps over alpha
+
+def fig06_di_vs_gs(runs: Sequence[dict], outdir=None, di_key: str = "di") -> pathlib.Path:
+    """Distance irrelevance against gradient symmetricity for every sweep run.
+
+    The two algorithms separate into opposite corners: Pizza high-GS / low-DI,
+    Clock low-GS / high-DI.
+    """
+    gs = np.array([r["gs"] for r in runs])
+    di = np.array([r[di_key] for r in runs])
+    alpha = np.array([r["config"]["attn_coeff"] for r in runs])
+
+    fig, ax = plt.subplots(figsize=(6.6, 5.2))
+    sc = ax.scatter(gs, di, c=alpha, cmap="coolwarm", s=12, alpha=0.75, edgecolor="none")
+    ax.axvline(0.98, color="0.4", lw=1, ls="--")
+    ax.axhline(0.6, color="0.4", lw=1, ls=":")
+    ax.set_xlabel("gradient symmetricity")
+    ax.set_ylabel(f"distance irrelevance ({'correct' if di_key == 'di' else 'top-wrong'})")
+    ax.set_title(f"Fig. 6 analog -- {len(runs)} runs")
+    fig.colorbar(sc, ax=ax, label="attention rate $\\alpha$")
+    ax.grid(alpha=0.25)
+    return _save(fig, f"fig06_di_vs_gs{'_topwrong' if di_key != 'di' else ''}.png", outdir)
+
+
+def logistic_boundary(alpha: np.ndarray, label: np.ndarray) -> Optional[dict]:
+    """Unregularized logistic regression of a binary label on alpha.
+
+    Returns the fit and ``alpha_star``, where the predicted probability is 0.5.
+    """
+    from sklearn.linear_model import LogisticRegression
+
+    label = np.asarray(label, dtype=int)
+    if label.min() == label.max() or len(label) < 3:
+        return None
+    # C = inf is the unregularized fit the spec asks for; penalty=None is deprecated
+    fit = LogisticRegression(C=np.inf, solver="lbfgs", max_iter=1000)
+    fit.fit(np.asarray(alpha).reshape(-1, 1), label)
+    coef = float(fit.coef_[0, 0])
+    if abs(coef) < 1e-9:
+        return None
+    return {"coef": coef, "intercept": float(fit.intercept_[0]),
+            "alpha_star": -float(fit.intercept_[0]) / coef, "fit": fit, "n": len(label)}
+
+
+def fig07_phase_boundary(runs: Sequence[dict], outdir=None, tag: str = "top") -> pathlib.Path:
+    """GS and DI against alpha for circular runs, with the fitted phase boundary."""
+    alpha = np.array([r["config"]["attn_coeff"] for r in runs])
+    fig, axes = plt.subplots(1, 2, figsize=(12.4, 4.8))
+    for ax, key, label, thresh, above in (
+        (axes[0], "gs", "gradient symmetricity", 0.98, True),
+        (axes[1], "di", "distance irrelevance (correct)", 0.6, False),
+    ):
+        y = np.array([r[key] for r in runs])
+        ax.scatter(alpha, y, s=10, alpha=0.6, color="tab:blue", edgecolor="none")
+        ax.axhline(thresh, color="0.4", lw=1, ls="--", label=f"{label} = {thresh}")
+        bound = logistic_boundary(alpha, (y > thresh) if above else (y < thresh))
+        if bound is not None:
+            ax.axvline(bound["alpha_star"], color="crimson", lw=1.8,
+                       label=f"$\\alpha^*$ = {bound['alpha_star']:.2f}")
+        ax.set_xlabel("attention rate $\\alpha$")
+        ax.set_ylabel(label)
+        ax.legend(fontsize=8)
+        ax.grid(alpha=0.25)
+    fig.suptitle(f"Fig. 7 ({tag}) analog -- phase boundary, {len(runs)} circular runs")
+    return _save(fig, f"fig07_{tag}_phase_boundary.png", outdir)
+
+
+def fig10_circular_share(runs: Sequence[dict], outdir=None, bins: int = 10,
+                         tag: str = "top") -> pathlib.Path:
+    """Share of finished runs that are circular, by attention rate."""
+    alpha = np.array([r["config"]["attn_coeff"] for r in runs])
+    circ = np.array([bool(r["circular"]) for r in runs])
+    edges = np.linspace(0, 1, bins + 1)
+    idx = np.clip(np.digitize(alpha, edges) - 1, 0, bins - 1)
+
+    centres, shares, counts = [], [], []
+    for b in range(bins):
+        sel = idx == b
+        if sel.sum():
+            centres.append((edges[b] + edges[b + 1]) / 2)
+            shares.append(circ[sel].mean() * 100)
+            counts.append(int(sel.sum()))
+
+    fig, ax = plt.subplots(figsize=(7.2, 4.4))
+    ax.bar(centres, shares, width=(edges[1] - edges[0]) * 0.85, color="tab:purple", alpha=0.8)
+    for c, s, n in zip(centres, shares, counts):
+        ax.annotate(f"n={n}", (c, s), ha="center", va="bottom", fontsize=7)
+    ax.axhline(circ.mean() * 100, color="0.3", ls="--", lw=1,
+               label=f"overall {circ.mean() * 100:.1f}%")
+    ax.set_xlabel("attention rate $\\alpha$")
+    ax.set_ylabel("circular runs (%)")
+    ax.set_title(f"Fig. 10 ({tag}) analog -- circular share by $\\alpha$, {len(runs)} runs")
+    ax.legend(fontsize=8)
+    ax.grid(alpha=0.25, axis="y")
+    return _save(fig, f"fig10_{tag}_circular_share.png", outdir)
