@@ -23,10 +23,11 @@ import torch.nn.functional as F
 from . import circles as C
 from . import metrics as M
 from .data import make_dataset, split_masks
-from .model import Transformer, from_config
+from .model import LINEAR_MODELS, Transformer, from_config
 
 REGISTRY = pathlib.Path("results/runs.jsonl")
 WEIGHTS_DIR = pathlib.Path("runs")
+CHECKPOINT_DIR = pathlib.Path("runs/checkpoints")
 
 
 # ----------------------------------------------------------------------------- config
@@ -53,6 +54,11 @@ class RunConfig:
     warmup: int = 10
     log_every: int = 100
     experiment: str = ""
+    # "transformer", or one of the App. E linear models: alpha, alpha_prime, beta,
+    # gamma, delta. Linear runs use betas (0.9, 0.999) and no warmup (spec §7).
+    model_type: str = "transformer"
+    # Steps at which to also save the weights, for App. J-K's training-dynamics figures.
+    checkpoint_steps: tuple[int, ...] = ()
 
     @property
     def d_head(self) -> int:
@@ -68,7 +74,13 @@ class RunConfig:
         digest = hashlib.blake2s(json.dumps(payload, sort_keys=True).encode(), digest_size=5)
         return digest.hexdigest()
 
-    def build(self) -> Transformer:
+    @property
+    def is_linear(self) -> bool:
+        return self.model_type != "transformer"
+
+    def build(self):
+        if self.is_linear:
+            return LINEAR_MODELS[self.model_type](p=self.p, seed=self.seed)
         vocab = self.p * (2 if self.diff_vocab else 1) + (1 if self.eqn_sign else 0)
         return Transformer(
             n_layers=self.n_layers,
@@ -93,6 +105,20 @@ def cross_entropy_f64(logits: torch.Tensor, labels: torch.Tensor) -> torch.Tenso
     """
     logprobs = F.log_softmax(logits.to(torch.float64), dim=-1)
     return -logprobs.gather(-1, labels[:, None]).mean()
+
+
+def make_scheduler(opt, cfg: RunConfig):
+    """``warmup = 0`` means a constant learning rate, which is what §7 gives the linear
+    models; otherwise LambdaLR ramps from 0 over ``warmup`` updates."""
+    if cfg.warmup <= 0:
+        return torch.optim.lr_scheduler.LambdaLR(opt, lambda s: 1.0)
+    return torch.optim.lr_scheduler.LambdaLR(opt, lambda s: min(s / cfg.warmup, 1.0))
+
+
+def final_logits(model, inputs: torch.Tensor) -> torch.Tensor:
+    """Last-position logits, (B, vocab), for a transformer or a linear model."""
+    out = model(inputs)
+    return out[:, -1, :] if out.dim() == 3 else out
 
 
 def set_precision() -> None:
@@ -128,18 +154,28 @@ def train_solo(
     model = cfg.build().to(device=device, dtype=dtype)
     opt = torch.optim.AdamW(model.parameters(), lr=cfg.lr, betas=cfg.betas, eps=cfg.eps,
                             weight_decay=cfg.weight_decay)
-    sched = torch.optim.lr_scheduler.LambdaLR(opt, lambda s: min(s / cfg.warmup, 1.0))
+    sched = make_scheduler(opt, cfg)
 
     history: dict[str, list[float]] = {k: [] for k in
                                        ("step", "train_loss", "val_loss", "train_acc", "val_acc", "norm")}
+    want_checkpoints = set(cfg.checkpoint_steps)
+    if want_checkpoints and save_weights:
+        CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
     start = time.perf_counter()
     for step in range(cfg.steps):
-        logits = model(inputs)[:, -1, :]
+        logits = final_logits(model, inputs)
         loss = cross_entropy_f64(logits[train_mask], labels[train_mask])
         loss.backward()
         opt.step()
         sched.step()
         opt.zero_grad(set_to_none=True)
+
+        if step + 1 in want_checkpoints and save_weights:
+            # saved after the update, so "step 90" means 90 updates applied
+            torch.save({"state_dict": {k: v.detach().cpu().clone()
+                                       for k, v in model.state_dict().items()},
+                        "config": cfg.as_dict(), "step": step + 1},
+                       CHECKPOINT_DIR / f"{cfg.run_id}_step{step + 1:06d}.pt")
 
         if step % cfg.log_every == 0 or step == cfg.steps - 1:
             with torch.no_grad():
@@ -164,7 +200,7 @@ def train_solo(
 
 
 def finalize(
-    model: Transformer,
+    model,
     cfg: RunConfig,
     labels: torch.Tensor,
     inputs: torch.Tensor,
@@ -179,7 +215,7 @@ def finalize(
     model = model.to("cpu").eval()
     inputs = inputs.cpu()
     with torch.no_grad():
-        logits = model(inputs)[:, -1, :]
+        logits = final_logits(model, inputs)
         train_loss = cross_entropy_f64(logits[train_mask], labels[train_mask]).item()
         val_loss = cross_entropy_f64(logits[val_mask], labels[val_mask]).item()
 
@@ -263,7 +299,7 @@ def train_ensemble(
 
     opt = torch.optim.AdamW(model.parameters(), lr=cfg0.lr, betas=cfg0.betas, eps=cfg0.eps,
                             weight_decay=cfg0.weight_decay)
-    sched = torch.optim.lr_scheduler.LambdaLR(opt, lambda s: min(s / cfg0.warmup, 1.0))
+    sched = make_scheduler(opt, cfg0)
 
     histories: list[dict[str, list[float]]] = [
         {k: [] for k in ("step", "train_loss", "val_loss", "train_acc", "val_acc")} for _ in cfgs]
@@ -363,7 +399,17 @@ def load_registry(path: pathlib.Path = REGISTRY) -> list[dict[str, Any]]:
         return [json.loads(line) for line in fh if line.strip()]
 
 
-def load_run(run_id: str, dir: pathlib.Path = WEIGHTS_DIR) -> tuple[Transformer, dict[str, Any]]:
+def load_checkpoint(run_id: str, step: int, dir: pathlib.Path = CHECKPOINT_DIR):
+    """Rebuild the model as it was after ``step`` updates (see RunConfig.checkpoint_steps)."""
+    torch.serialization.add_safe_globals([torch.torch_version.TorchVersion])
+    payload = torch.load(dir / f"{run_id}_step{step:06d}.pt", map_location="cpu")
+    cfg = RunConfig(**payload["config"])
+    model = cfg.build()
+    model.load_state_dict(payload["state_dict"], strict=True)
+    return model.eval(), payload
+
+
+def load_run(run_id: str, dir: pathlib.Path = WEIGHTS_DIR):
     """Rebuild a saved run's model from ``runs/<run_id>.pt``."""
     # Runs saved before versions() cast the torch version to str carry a TorchVersion
     # in their metrics; allow it so those checkpoints still load under weights_only.

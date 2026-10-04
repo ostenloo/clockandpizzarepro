@@ -86,9 +86,8 @@ class _SumToy(nn.Module):
         self.W_E_T = nn.Parameter(torch.randn(P, d))
         self.lin = nn.Linear(d, P)
 
-    @property
-    def embed(self):
-        return lambda tokens: self.W_E_T[tokens]
+    def embed_tokens(self, tokens):
+        return self.W_E_T[tokens]
 
     def forward_from_embeddings(self, e):
         out = self.lin(e.sum(dim=1))
@@ -104,9 +103,8 @@ class _ClockToy(nn.Module):
         j = torch.arange(P, dtype=torch.float32)
         self.W_E_T = nn.Parameter(torch.stack([torch.cos(self.w * j), torch.sin(self.w * j)], dim=1))
 
-    @property
-    def embed(self):
-        return lambda tokens: self.W_E_T[tokens]
+    def embed_tokens(self, tokens):
+        return self.W_E_T[tokens]
 
     def forward_from_embeddings(self, e):
         x1, y1 = e[:, 0, 0], e[:, 0, 1]

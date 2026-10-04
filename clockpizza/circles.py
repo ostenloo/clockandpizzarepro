@@ -33,9 +33,19 @@ class EmbeddingPCA:
         return np.array([circle_score(self.proj[:, i].numpy(), p) for i in range(n)])
 
 
+def token_rows(model_or_W, p: int = P) -> torch.Tensor:
+    """The p number-token embeddings as rows, from a model or a raw (d, vocab) W_E."""
+    if hasattr(model_or_W, "token_embeddings"):
+        return model_or_W.token_embeddings(p).detach().cpu().double()
+    return model_or_W.T[:p].detach().cpu().double()
+
+
 def embedding_pca(W_E: torch.Tensor, p: int = P) -> EmbeddingPCA:
-    """Centered PCA of the p number-token embeddings (rows of W_E.T for tokens 0..p-1)."""
-    W = W_E.T[:p].detach().cpu().double()
+    """Centered PCA of the p number-token embeddings.
+
+    Accepts a model or a raw (d_model, d_vocab) W_E.
+    """
+    W = token_rows(W_E, p)
     mu = W.mean(dim=0)
     _, _, Vt = torch.linalg.svd(W - mu, full_matrices=False)
     return EmbeddingPCA(mu=mu, proj=(W - mu) @ Vt.T, Vt=Vt)
@@ -99,7 +109,7 @@ class Circle:
 
 
 def find_circles(
-    W_E: torch.Tensor,
+    W_E,
     p: int = P,
     n_pcs: int = 20,
     min_score: float = 0.9,
@@ -191,6 +201,11 @@ def classify_circles(
 
 # ------------------------------------------------------------------- isolation operator
 
+def isolated_rows(keep: Sequence[int], pca: EmbeddingPCA) -> torch.Tensor:
+    """The isolated token embeddings as rows (p, d), with the token mean added back."""
+    return pca.mu + pca.proj[:, list(keep)] @ pca.Vt[list(keep)]
+
+
 def isolate_embedding(W_E: torch.Tensor, keep: Sequence[int], p: int = P,
                       pca: Optional[EmbeddingPCA] = None) -> torch.Tensor:
     """Keep the given PCs of the number-token embeddings and add the token mean back.
@@ -198,21 +213,26 @@ def isolate_embedding(W_E: torch.Tensor, keep: Sequence[int], p: int = P,
     Returns a new W_E (d, d_vocab); non-number tokens, if any, are left untouched.
     """
     pca = embedding_pca(W_E, p) if pca is None else pca
-    keep = list(keep)
-    W_iso = pca.mu + pca.proj[:, keep] @ pca.Vt[keep]
     out = W_E.detach().clone()
-    out[:, :p] = W_iso.T.to(out.dtype)
+    out[:, :p] = isolated_rows(keep, pca).T.to(out.dtype)
     return out
 
 
 def isolated_model(model, keep: Sequence[int], p: int = P, pca: Optional[EmbeddingPCA] = None):
     """A deep copy of ``model`` with its number-token embeddings isolated to ``keep``.
 
-    Every other weight -- W_pos included -- is unchanged.
+    Every other weight -- W_pos included -- is unchanged. Works for the transformer
+    (whose table is ``embed.W_E``, stored transposed) and for the App. E linear models
+    (whose table is an ``nn.Embedding`` with tokens as rows).
     """
+    pca = embedding_pca(model, p) if pca is None else pca
     out = copy.deepcopy(model)
+    rows = isolated_rows(keep, pca)
     with torch.no_grad():
-        out.embed.W_E.copy_(isolate_embedding(model.embed.W_E, keep, p, pca=pca))
+        if hasattr(out, "embed") and hasattr(out.embed, "W_E"):
+            out.embed.W_E[:, :p] = rows.T.to(out.embed.W_E.dtype)
+        else:
+            out.embed_table.weight[:p] = rows.to(out.embed_table.weight.dtype)
     return out
 
 

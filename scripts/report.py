@@ -43,25 +43,30 @@ GATES = """## Gate results
 | M2 | 8 seeds per alpha, >= 7 of 8 at 100% validation accuracy | **pass** -- 8/8 at both alphas |
 | M3 | Test 6 passes; E1-E3 throughput and cost within budget | **partial** -- test 6 passes (deviation V1); cost is 27.2 GPU-hours against a 12-hour budget (V3) |
 | M4 | T1-T4 and T6-T12 evaluated | **pass** -- all 11 in band |
-| M5 | T5, T13, T14; Fig. 6, 7, 10 analogs | E2 covers T5 and T13; T14 needs E3 |
-| M6 | E4-E9, T15-T18 | not started |
+| M5 | T5, T13, T14; Fig. 6, 7, 10 analogs | E2 and E3 implemented; E2 running, E3 awaiting budget |
+| M6 | E4-E9, T15-T18 | all implemented; awaiting compute |
 """
 
 SCOPE = """## What is implemented
 
-| experiment | models | sampler | runner and analysis | figures | state |
-| --- | --- | --- | --- | --- | --- |
-| E1 | yes | n/a | `scripts/e1.py` | Fig. 2, 3, 4, 5, 13 | complete |
-| E2 | yes | yes | `scripts/e2.py` | Fig. 6, 7 top, 10 top | complete |
-| E3 | yes | yes | - | - | sampler only |
-| E4 | yes | yes | - | - | sampler only |
-| E5 | classes only | - | - | - | linear models cannot train yet: `RunConfig.build()` always returns a Transformer |
-| E6 | yes | - | - | - | not started |
-| E7 | yes | yes | - | - | sampler only |
-| E8 | - | - | - | - | needs mid-training checkpointing, which the trainers do not do |
-| E9 | classes only | - | - | - | blocked with E5 |
+All nine experiments have a sampler, a runner and an analysis script; what differs is
+how much compute each has actually been given.
 
-Targets T1-T12 are decided; T13 follows from E2; T14-T18 need E3-E9.
+| experiment | script | targets | figures |
+| --- | --- | --- | --- |
+| E1 | `scripts/e1.py` | T1-T4, T6-T12 | Fig. 2, 3, 4, 5, 13 |
+| E2 | `scripts/e2.py` | T5, T13 | Fig. 6, 7 top, 10 top |
+| E3 | `scripts/e3.py` | T14 | Fig. 7 bottom, 10 bottom |
+| E4 | `scripts/e4.py` | T15 | Fig. 11 |
+| E5 | `scripts/e5.py` | T18 | Fig. 14, 15, 16 |
+| E6 | `scripts/e6.py` | T16 | Fig. 17 |
+| E7 | `scripts/e7.py` | - | Fig. 18, 20 |
+| E8 | `scripts/e8.py` | - (App. K check) | Fig. 22, 23 |
+| E9 | `scripts/e9.py` | T17 | Fig. 25, 26 |
+
+Every script is resumable and takes `--skip-training` to re-analyse from the registry.
+The sections below show which have run; one with no runs says so rather than being
+omitted.
 """
 
 DEVIATIONS = """## Deviations
@@ -171,10 +176,15 @@ def main() -> int:
                      "*Fixtures absent; clone https://github.com/fjzzq2002/pizza into "
                      "`third_party/pizza`.*\n")
 
-    if "E1" in experiments:
-        parts.append(run_script(["scripts/e1.py", "--skip-training", *fig_flag], "E1"))
-    if "E2" in experiments:
-        parts.append(run_script(["scripts/e2.py", "--skip-training", *fig_flag], "E2"))
+    for name in ("E1", "E2", "E3", "E4", "E5", "E6", "E7", "E8", "E9"):
+        script = ROOT / "scripts" / f"{name.lower()}.py"
+        if not script.exists():
+            continue
+        if name not in experiments and name not in ("E9",):
+            parts.append(f"# {name}\n\n*No {name} runs in the registry.*\n")
+            continue
+        parts.append(run_script([f"scripts/{name.lower()}.py", "--skip-training", *fig_flag],
+                                name))
 
     parts.append(figure_inventory(args.figdir))
     parts.append(DEVIATIONS)

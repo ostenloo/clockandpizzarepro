@@ -103,7 +103,7 @@ def gradient_symmetricity(
         cols.append(torch.full_like(a, (vocab + 1) - 1))
     tokens = torch.stack(cols, dim=1)
 
-    e = model.embed(tokens).detach().clone().requires_grad_(True)
+    e = model.embed_tokens(tokens).detach().clone().requires_grad_(True)
     logits = model.forward_from_embeddings(e)[:, -1, :]
     target = logits[torch.arange(len(triples), device=device), c].sum()
     (grad,) = torch.autograd.grad(target, e)
@@ -126,7 +126,7 @@ def circle_score(v: np.ndarray, p: int = P) -> float:
 
 def pc_projections(W: torch.Tensor | np.ndarray, n_pcs: int = 4) -> np.ndarray:
     """Centered PCA of the token embeddings (rows = tokens); returns (n_tokens, n_pcs)."""
-    W = torch.as_tensor(np.asarray(W), dtype=torch.float64)
+    W = torch.as_tensor(W).detach().cpu().to(torch.float64)
     Wc = W - W.mean(dim=0, keepdim=True)
     _, _, Vt = torch.linalg.svd(Wc, full_matrices=False)
     return (Wc @ Vt.T)[:, :n_pcs].numpy()
@@ -139,9 +139,8 @@ def circularity(W_num: torch.Tensor | np.ndarray, p: int = P, n_pcs: int = 4) ->
 
 
 def model_circularity(model, p: int = P, n_pcs: int = 4) -> float:
-    """Circularity of a transformer's number-token embeddings (rows of W_E.T for tokens 0..p-1)."""
-    W = model.embed.W_E.T[:p].detach().cpu()
-    return circularity(W, p=p, n_pcs=n_pcs)
+    """Circularity of a model's number-token embeddings (rows, tokens 0..p-1)."""
+    return circularity(model.token_embeddings(p).detach().cpu(), p=p, n_pcs=n_pcs)
 
 
 def is_circular(circ: float) -> bool:
@@ -161,7 +160,7 @@ def fve(y: np.ndarray | torch.Tensor, f: np.ndarray | torch.Tensor) -> float:
 
 
 def _standardize(x: np.ndarray | torch.Tensor) -> np.ndarray:
-    x = np.asarray(torch.as_tensor(x).detach().cpu().numpy(), dtype=np.float64).ravel()
+    x = torch.as_tensor(x).detach().cpu().to(torch.float64).numpy().ravel()
     return (x - x.mean()) / x.std()
 
 

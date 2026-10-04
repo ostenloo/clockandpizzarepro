@@ -162,6 +162,14 @@ class Transformer(nn.Module):
         """Logits at the last position only: (B, d_vocab)."""
         return self.forward(tokens)[:, -1, :]
 
+    def embed_tokens(self, tokens: torch.Tensor) -> torch.Tensor:
+        """Per-position token embeddings, (B, n, d), before W_pos is added."""
+        return self.embed(tokens)
+
+    def token_embeddings(self, p: int = 59) -> torch.Tensor:
+        """The p number-token embeddings as rows -- what circularity and PCA use."""
+        return self.embed.W_E.T[:p]
+
     def parameters_norm(self) -> float:
         return sum(torch.sum(p * p).item() for p in self.parameters()) ** 0.5
 
@@ -216,6 +224,44 @@ class _LinearBase(nn.Module):
     def forward(self, tokens: torch.Tensor) -> torch.Tensor:
         return self.hidden(tokens) @ self.unembed.weight.T
 
+    # -- the interface clockpizza.metrics expects of any model ---------------------
+
+    def embed_tokens(self, tokens: torch.Tensor) -> torch.Tensor:
+        """Per-position token embeddings, (B, 2, d). Separate leaves per position are
+        what makes gradient symmetricity well defined when a = b.
+
+        Named ``embed_tokens``, not ``embed``: the linear models' embedding table is
+        itself called ``embed`` (the released checkpoints use that key), and a method of
+        the same name would shadow it.
+        """
+        return torch.stack([self._embed_at(0, tokens[:, 0]),
+                            self._embed_at(1, tokens[:, 1])], dim=1)
+
+    def _embed_at(self, position: int, tokens: torch.Tensor) -> torch.Tensor:
+        return self.embed_table.weight[tokens]
+
+    def forward_from_embeddings(self, e: torch.Tensor) -> torch.Tensor:
+        """Logits from (B, 2, d) token embeddings, shaped (B, 1, p) so callers can take
+        ``[:, -1, :]`` exactly as they do for the transformer."""
+        return (self.hidden_from_embeddings(e) @ self.unembed.weight.T).unsqueeze(1)
+
+    def hidden_from_embeddings(self, e: torch.Tensor) -> torch.Tensor:
+        raise NotImplementedError
+
+    def final_logits(self, tokens: torch.Tensor) -> torch.Tensor:
+        return self(tokens)
+
+    def token_embeddings(self, p: int = 59) -> torch.Tensor:
+        return self.embed_table.weight[:p]
+
+    @property
+    def embed_table(self) -> nn.Embedding:
+        """The table circularity should look at (``embed1`` for the two-table model)."""
+        return getattr(self, "embed", None) or self.embed1
+
+    def parameters_norm(self) -> float:
+        return sum(torch.sum(q * q).item() for q in self.parameters()) ** 0.5
+
 
 class LinearA(_LinearBase):
     """alpha / MyModelA: U . ReLU(l1(e_a + e_b)), one 256-d table."""
@@ -227,7 +273,9 @@ class LinearA(_LinearBase):
         self.l1 = nn.Linear(d_hidden, d_hidden)
 
     def hidden(self, tokens):
-        e = self.embed(tokens)
+        return self.hidden_from_embeddings(self.embed_tokens(tokens))
+
+    def hidden_from_embeddings(self, e):
         return F.relu(self.l1(e[:, 0] + e[:, 1]))
 
 
@@ -242,7 +290,13 @@ class LinearX(_LinearBase):
         self.l1 = nn.Linear(d_hidden, d_hidden)
 
     def hidden(self, tokens):
-        return F.relu(self.l1(self.embed1(tokens[:, 0]) + self.embed2(tokens[:, 1])))
+        return self.hidden_from_embeddings(self.embed_tokens(tokens))
+
+    def hidden_from_embeddings(self, e):
+        return F.relu(self.l1(e[:, 0] + e[:, 1]))
+
+    def _embed_at(self, position, tokens):
+        return (self.embed1 if position == 0 else self.embed2).weight[tokens]
 
 
 class LinearB(_LinearBase):
@@ -256,13 +310,18 @@ class LinearB(_LinearBase):
         self.l2 = nn.Linear(d_hidden, d_hidden)
 
     def hidden(self, tokens, second_relu: bool = True):
-        e = self.embed(tokens)
+        return self.hidden_from_embeddings(self.embed_tokens(tokens), second_relu=second_relu)
+
+    def hidden_from_embeddings(self, e, second_relu: bool = True):
         h = self.l2(F.relu(self.l1(e[:, 0] + e[:, 1])))
         return F.relu(h) if second_relu else h
 
     def forward(self, tokens, second_relu: bool = True):
         """``second_relu=False`` drops the second ReLU, as App. L / target T17 requires."""
         return self.hidden(tokens, second_relu=second_relu) @ self.unembed.weight.T
+
+    def final_logits(self, tokens, second_relu: bool = True):
+        return self(tokens, second_relu=second_relu)
 
 
 class LinearC(_LinearBase):
@@ -276,9 +335,10 @@ class LinearC(_LinearBase):
         self.l2 = nn.Linear(d_hidden, d_hidden)
 
     def hidden(self, tokens):
-        e = self.embed(tokens)
-        h = F.relu(self.l1(e[:, 0]) + self.l1(e[:, 1]))
-        return F.relu(self.l2(h))
+        return self.hidden_from_embeddings(self.embed_tokens(tokens))
+
+    def hidden_from_embeddings(self, e):
+        return F.relu(self.l2(F.relu(self.l1(e[:, 0]) + self.l1(e[:, 1]))))
 
 
 class LinearD(_LinearBase):
@@ -291,7 +351,9 @@ class LinearD(_LinearBase):
         self.l1 = nn.Linear(d_hidden, d_hidden)
 
     def hidden(self, tokens):
-        e = self.embed(tokens)
+        return self.hidden_from_embeddings(self.embed_tokens(tokens))
+
+    def hidden_from_embeddings(self, e):
         return F.relu(self.l1(torch.cat([e[:, 0], e[:, 1]], dim=1)))
 
 

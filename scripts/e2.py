@@ -22,6 +22,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
 from clockpizza import plots  # noqa: E402
 from clockpizza.sweeps import e2_configs, run as run_sweep  # noqa: E402
+from clockpizza.summary import fmt_dist, iqr  # noqa: E402
 from clockpizza.train import load_registry  # noqa: E402
 
 EXPERIMENT = "E2"
@@ -38,14 +39,6 @@ REFERENCE = [
     ((0.5, 0.7), 127, 0.84, "0.75-0.94", 0.56, "0.39-0.64", 28),
     ((0.8, 1.0), 159, 0.50, "0.43-0.58", 0.79, "0.75-0.85", 0),
 ]
-
-
-def iqr(xs: Sequence[float]) -> tuple[float, float]:
-    xs = sorted(xs)
-    if len(xs) < 4:
-        return (xs[0], xs[-1]) if xs else (float("nan"), float("nan"))
-    q = st.quantiles(xs, n=4)
-    return q[0], q[2]
 
 
 def main() -> int:
@@ -68,6 +61,9 @@ def main() -> int:
 
     print(f"# E2 -- attention-rate sweep\n\n{len(runs)} runs; {len(perfect)} at 100% "
           f"validation accuracy; {len(circular)} of those circular.\n")
+    if not runs:
+        print("*No E2 runs in the registry yet; nothing to analyse.*")
+        return 0
 
     failures: list[str] = []
     targets: list[tuple[str, str, str, str, str, bool]] = []

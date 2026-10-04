@@ -12,7 +12,7 @@ import random
 from collections import defaultdict
 from typing import Any, Callable, Iterable, Optional, Sequence
 
-from .train import RunConfig, append_record, registry_ids, train_ensemble
+from .train import RunConfig, append_record, registry_ids, train_ensemble, train_solo
 
 # §10: the authors drew d = int(2 ** random.uniform(5, 9)). Ensembles need shared
 # widths, so E3 uses a 24-point log grid over the same range instead (logged in
@@ -76,11 +76,52 @@ def e7_configs(n: int = 500, seed: int = 3, steps: int = 20_000,
     return out
 
 
+def e5_configs(n_per_model: int = 200, seed: int = 4, steps: int = 20_000,
+               experiment: str = "E5") -> list[RunConfig]:
+    """App. E / Fig. 14-16: the five linear models.
+
+    §7 gives the linear models betas (0.9, 0.999) and no warmup. They have no attention,
+    so ``attn_coeff`` is irrelevant and fixed at 0.
+    """
+    out = []
+    for model_type in ("alpha", "alpha_prime", "beta", "gamma", "delta"):
+        for i in range(n_per_model):
+            out.append(RunConfig(seed=i, attn_coeff=0.0, model_type=model_type,
+                                 betas=(0.9, 0.999), warmup=0, steps=steps,
+                                 experiment=experiment))
+    return out
+
+
+def e6_configs(n: int = 32, seed: int = 5, steps: int = 20_000,
+               experiment: str = "E6") -> list[RunConfig]:
+    """App. H / Fig. 17: d = 1024 at alpha = 1, looking for a Pizza run."""
+    return [RunConfig(seed=i, attn_coeff=1.0, d_model=1024, n_layers=1, steps=steps,
+                      experiment=experiment) for i in range(n)]
+
+
+def e8_configs(n: int = 4, steps: int = 20_000, experiment: str = "E8") -> list[RunConfig]:
+    """App. J-K / Fig. 22-23: alpha = 1 with checkpoints at steps 90, 210, 300, 510, 840,
+    and alpha = 0 with one at step 600."""
+    out = []
+    for i in range(n):
+        out.append(RunConfig(seed=i, attn_coeff=1.0, steps=steps, experiment=experiment,
+                             checkpoint_steps=(90, 210, 300, 510, 840)))
+        out.append(RunConfig(seed=i, attn_coeff=0.0, steps=steps, experiment=experiment,
+                             checkpoint_steps=(600,)))
+    return out
+
+
+def e9_config(seed: int = 0, steps: int = 20_000, experiment: str = "E9") -> RunConfig:
+    """App. L / Fig. 24-26: one circular, Pizza-like linear beta run."""
+    return RunConfig(seed=seed, attn_coeff=0.0, model_type="beta", betas=(0.9, 0.999),
+                     warmup=0, steps=steps, experiment=experiment)
+
+
 def group_key(cfg: RunConfig) -> tuple:
     """Members of one ensemble must share everything but seed, alpha and split."""
-    return (cfg.d_model, cfg.n_layers, cfg.n_heads, cfg.act_fn, cfg.diff_vocab,
-            cfg.eqn_sign, cfg.p, cfg.steps, cfg.lr, cfg.weight_decay, cfg.betas,
-            cfg.eps, cfg.frac, cfg.warmup)
+    return (cfg.model_type, cfg.d_model, cfg.n_layers, cfg.n_heads, cfg.act_fn,
+            cfg.diff_vocab, cfg.eqn_sign, cfg.p, cfg.steps, cfg.lr, cfg.weight_decay,
+            cfg.betas, cfg.eps, cfg.frac, cfg.warmup, cfg.checkpoint_steps)
 
 
 def plan(configs: Sequence[RunConfig], chunk: int = 64,
@@ -125,10 +166,17 @@ def run(configs: Sequence[RunConfig], device: Optional[str] = None, chunk: Optio
     trained = 0
     for i, batch in enumerate(batches, start=1):
         cfg = batch[0]
+        solo_only = cfg.is_linear or cfg.checkpoint_steps
         if progress:
-            print(f"[{i}/{len(batches)}] E = {len(batch)}  d = {cfg.d_model}  "
+            how = "solo" if solo_only else f"E = {len(batch)}"
+            print(f"[{i}/{len(batches)}] {how}  {cfg.model_type}  d = {cfg.d_model}  "
                   f"layers = {cfg.n_layers}  act = {cfg.act_fn}", flush=True)
-        records = train_ensemble(batch, device=device, progress=False)
+        # the ensemble is a stacked transformer: linear models and runs that need
+        # mid-training checkpoints go through the solo loop instead
+        if solo_only:
+            records = [train_solo(c, device=device) for c in batch]
+        else:
+            records = train_ensemble(batch, device=device, progress=False)
         for rec in records:
             append_record(rec)
         trained += len(records)

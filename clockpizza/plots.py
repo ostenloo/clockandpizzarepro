@@ -260,7 +260,8 @@ def logistic_boundary(alpha: np.ndarray, label: np.ndarray) -> Optional[dict]:
     from sklearn.linear_model import LogisticRegression
 
     label = np.asarray(label, dtype=int)
-    if label.min() == label.max() or len(label) < 3:
+    # too few points, or all one class: there is no boundary to fit
+    if len(label) < 3 or label.min() == label.max():
         return None
     # C = inf is the unregularized fit the spec asks for; penalty=None is deprecated
     fit = LogisticRegression(C=np.inf, solver="lbfgs", max_iter=1000)
@@ -323,3 +324,346 @@ def fig10_circular_share(runs: Sequence[dict], outdir=None, bins: int = 10,
     ax.legend(fontsize=8)
     ax.grid(alpha=0.25, axis="y")
     return _save(fig, f"fig10_{tag}_circular_share.png", outdir)
+
+
+# ------------------------------------------------- Fig. 7 / 10 bottom, Fig. 11: width and depth
+
+def boundary_by_group(runs: Sequence[dict], key: str, thresh: float, above: bool,
+                      group: str = "d_model") -> dict[Any, float]:
+    """Per-group logistic boundary alpha*, e.g. one per width or per depth."""
+    out: dict[Any, float] = {}
+    groups: dict[Any, list[dict]] = {}
+    for r in runs:
+        groups.setdefault(r["config"][group], []).append(r)
+    for g, rs in sorted(groups.items()):
+        y = np.array([r[key] for r in rs])
+        a = np.array([r["config"]["attn_coeff"] for r in rs])
+        b = logistic_boundary(a, (y > thresh) if above else (y < thresh))
+        if b is not None:
+            out[g] = b["alpha_star"]
+    return out
+
+
+def fig07_width_phase(runs: Sequence[dict], outdir=None) -> pathlib.Path:
+    """Fig. 7 bottom: (alpha, log2 d) scatter coloured by GS and by DI, with the
+    per-width phase boundary."""
+    alpha = np.array([r["config"]["attn_coeff"] for r in runs])
+    width = np.array([r["config"]["d_model"] for r in runs], dtype=float)
+
+    fig, axes = plt.subplots(1, 2, figsize=(13.0, 4.9))
+    for ax, key, label, thresh, above in (
+        (axes[0], "gs", "gradient symmetricity", 0.98, True),
+        (axes[1], "di", "distance irrelevance (correct)", 0.6, False),
+    ):
+        y = np.array([r[key] for r in runs])
+        sc = ax.scatter(alpha, np.log2(width), c=y, cmap="coolwarm", s=14, alpha=0.85,
+                        edgecolor="none")
+        bounds = boundary_by_group(runs, key, thresh, above)
+        if bounds:
+            ws = sorted(bounds)
+            ax.plot([bounds[w] for w in ws], np.log2(ws), color="black", marker="o",
+                    ms=4, lw=1.8, label="$\\alpha^*$ per width")
+            ax.legend(fontsize=8)
+        ax.set_xlabel("attention rate $\\alpha$")
+        ax.set_ylabel("$\\log_2 d$")
+        ax.set_title(label)
+        fig.colorbar(sc, ax=ax, label=label)
+    fig.suptitle(f"Fig. 7 (bottom) analog -- width sweep, {len(runs)} circular runs")
+    return _save(fig, "fig07_bottom_width_phase.png", outdir)
+
+
+def fig10_width_circular_share(runs: Sequence[dict], outdir=None) -> pathlib.Path:
+    """Fig. 10 bottom: circular share against width."""
+    widths = sorted({r["config"]["d_model"] for r in runs})
+    shares, counts = [], []
+    for w in widths:
+        g = [r for r in runs if r["config"]["d_model"] == w]
+        shares.append(100 * sum(bool(r["circular"]) for r in g) / len(g))
+        counts.append(len(g))
+
+    fig, ax = plt.subplots(figsize=(7.6, 4.4))
+    ax.plot(widths, shares, marker="o", lw=1.6, color="tab:purple")
+    ax.set_xscale("log", base=2)
+    ax.set_xlabel("width $d$")
+    ax.set_ylabel("circular runs (%)")
+    ax.set_title(f"Fig. 10 (bottom) analog -- circular share by width, {len(runs)} runs")
+    ax.grid(alpha=0.3)
+    return _save(fig, "fig10_bottom_width_circular_share.png", outdir)
+
+
+def fig11_depth(runs: Sequence[dict], outdir=None) -> pathlib.Path:
+    """Fig. 11: GS and DI against alpha at 2, 3 and 4 layers, plus circular share."""
+    depths = sorted({r["config"]["n_layers"] for r in runs})
+    fig, axes = plt.subplots(1, 3, figsize=(16.0, 4.6))
+    for ax, key, label, thresh, above in (
+        (axes[0], "gs", "gradient symmetricity", 0.98, True),
+        (axes[1], "di", "distance irrelevance (correct)", 0.6, False),
+    ):
+        for depth in depths:
+            g = [r for r in runs if r["config"]["n_layers"] == depth]
+            ax.scatter([r["config"]["attn_coeff"] for r in g], [r[key] for r in g],
+                       s=9, alpha=0.5, label=f"{depth} layers")
+        ax.axhline(thresh, color="0.4", lw=1, ls="--")
+        ax.set_xlabel("attention rate $\\alpha$")
+        ax.set_ylabel(label)
+        ax.legend(fontsize=8)
+        ax.grid(alpha=0.25)
+
+    ax = axes[2]
+    shares = []
+    for depth in depths:
+        g = [r for r in runs if r["config"]["n_layers"] == depth]
+        perfect = [r for r in g if r["val_accuracy"] == 1.0]
+        shares.append(100 * sum(bool(r["circular"]) for r in perfect) / len(perfect)
+                      if perfect else 0.0)
+    ax.bar([str(d) for d in depths], shares, color="tab:purple", alpha=0.85)
+    for i, s in enumerate(shares):
+        ax.annotate(f"{s:.1f}%", (i, s), ha="center", va="bottom", fontsize=9)
+    ax.set_xlabel("layers")
+    ax.set_ylabel("circular share of 100%-validation runs (%)")
+    ax.grid(alpha=0.25, axis="y")
+    fig.suptitle(f"Fig. 11 analog -- depth sweep, {len(runs)} runs")
+    return _save(fig, "fig11_depth.png", outdir)
+
+
+# ------------------------------------------------- Fig. 14-16: the App. E linear models
+
+LINEAR_LABELS = {"alpha": "$\\alpha$", "alpha_prime": "$\\alpha'$", "beta": "$\\beta$",
+                 "gamma": "$\\gamma$", "delta": "$\\delta$"}
+
+
+def fig14_linear_metrics(runs: Sequence[dict], outdir=None) -> pathlib.Path:
+    """DI against GS, and circularity, for each linear model."""
+    kinds = [k for k in LINEAR_LABELS if any(r["config"]["model_type"] == k for r in runs)]
+    fig, axes = plt.subplots(1, 2, figsize=(13.0, 4.8))
+    for kind in kinds:
+        g = [r for r in runs if r["config"]["model_type"] == kind]
+        axes[0].scatter([r["gs"] for r in g], [r["di"] for r in g], s=14, alpha=0.6,
+                        label=LINEAR_LABELS[kind])
+        axes[1].scatter([r["circularity"] for r in g], [r["di"] for r in g], s=14, alpha=0.6,
+                        label=LINEAR_LABELS[kind])
+    axes[0].set_xlabel("gradient symmetricity")
+    axes[0].set_ylabel("distance irrelevance")
+    axes[1].set_xlabel("circularity")
+    axes[1].set_ylabel("distance irrelevance")
+    axes[1].axvline(0.995, color="0.4", lw=1, ls="--", label="circular threshold")
+    for ax in axes:
+        ax.legend(fontsize=8)
+        ax.grid(alpha=0.25)
+    fig.suptitle(f"Fig. 14 analog -- linear models, {len(runs)} runs")
+    return _save(fig, "fig14_linear_metrics.png", outdir)
+
+
+def fig15_linear_di_hist(runs: Sequence[dict], outdir=None) -> pathlib.Path:
+    """Distance-irrelevance histogram per linear model (the T18 ordering, visually)."""
+    kinds = [k for k in LINEAR_LABELS if any(r["config"]["model_type"] == k for r in runs)]
+    fig, axes = plt.subplots(1, len(kinds), figsize=(3.3 * len(kinds), 3.5), squeeze=False)
+    bins = np.linspace(0, 1, 26)
+    for ax, kind in zip(axes[0], kinds):
+        di = [r["di"] for r in runs if r["config"]["model_type"] == kind]
+        ax.hist(di, bins=bins, color="tab:blue", alpha=0.85)
+        ax.axvline(float(np.median(di)), color="crimson", lw=1.6,
+                   label=f"median {np.median(di):.2f}")
+        ax.set_title(f"{LINEAR_LABELS[kind]}  (n = {len(di)})")
+        ax.set_xlabel("distance irrelevance")
+        ax.legend(fontsize=8)
+    fig.suptitle("Fig. 15 analog -- distance irrelevance by linear model", y=1.02)
+    return _save(fig, "fig15_linear_di_hist.png", outdir)
+
+
+def fig16_linear_isolation(models: dict, outdir=None) -> pathlib.Path:
+    """Circle isolation applied to one circular linear model of each named kind."""
+    from . import circles as C
+
+    data = make_dataset()
+    items = [(name, m) for name, m in models.items() if m is not None]
+    fig, axes = plt.subplots(2, len(items), figsize=(4.8 * len(items), 8.2), squeeze=False)
+    for j, (name, model) in enumerate(items):
+        pca = C.embedding_pca(model)
+        found = C.find_circles(model, pca=pca)
+        circle = found[0] if found else None
+        ax = axes[0][j]
+        if circle is None:
+            ax.text(0.5, 0.5, "no circle found", ha="center", va="center")
+            ax.set_axis_off()
+        else:
+            iso = C.isolated_model(model, list(circle.pcs), pca=pca)
+            with torch.no_grad():
+                logits = iso.final_logits(data.inputs)
+            im = ax.imshow(C.logit_heatmap(logits, circle.k), cmap="Reds_r", aspect="auto")
+            acc = M.accuracy(logits, data.labels) * 100
+            ax.set_title(f"{name}: k = {circle.k}, $\\delta$ = {circle.delta}, {acc:.1f}%")
+            ax.set_xlabel("(a + b) mod p")
+            ax.set_ylabel(f"(a - b) / {circle.delta} mod p")
+            fig.colorbar(im, ax=ax, label="correct logit")
+        ax2 = axes[1][j]
+        pcs = circle.pcs if circle else (0, 1)
+        x, y = pca.proj[:, pcs[0]].numpy(), pca.proj[:, pcs[1]].numpy()
+        ax2.scatter(x, y, c="crimson", s=20)
+        for t in range(data.p):
+            ax2.annotate(str(t), (x[t], y[t]), fontsize=6, xytext=(3, 3),
+                         textcoords="offset points")
+        ax2.set_xlabel(f"PC {pcs[0] + 1}")
+        ax2.set_ylabel(f"PC {pcs[1] + 1}")
+        ax2.set_aspect("equal", adjustable="datalim")
+    fig.suptitle("Fig. 16 analog -- circle isolation on linear models", y=1.0)
+    return _save(fig, "fig16_linear_isolation.png", outdir)
+
+
+# ------------------------------------------------------ Fig. 24-26: App. L, the linear beta
+
+def fig25_aligned_weights(model, outdir=None) -> pathlib.Path:
+    """W1 and W2 of a linear beta run, rows ordered by the phase they respond to."""
+    W1 = model.l1.weight.detach().cpu().numpy()
+    W2 = model.l2.weight.detach().cpu().numpy()
+    fig, axes = plt.subplots(1, 2, figsize=(12.0, 4.8))
+    for ax, W, name in ((axes[0], W1, "$W_1$"), (axes[1], W2, "$W_2$")):
+        order = np.argsort(np.arctan2(W[:, 1], W[:, 0]))
+        im = ax.imshow(W[order], aspect="auto", cmap="RdBu_r",
+                       vmin=-np.abs(W).max(), vmax=np.abs(W).max())
+        ax.set_title(f"{name}, rows sorted by phase")
+        ax.set_xlabel("input unit")
+        ax.set_ylabel("hidden unit (sorted)")
+        fig.colorbar(im, ax=ax)
+    fig.suptitle("Fig. 25 analog -- aligned weights of the linear $\\beta$ model")
+    return _save(fig, "fig25_aligned_weights.png", outdir)
+
+
+def fig26_second_harmonic_fit(model, outdir=None, n: int = 721) -> pathlib.Path:
+    """Fit f(cos t, sin t) to A cos(2t + phi) for the beta model's hidden layer (App. L).
+
+    The second harmonic is the signature App. L reports: the layer responds to twice
+    the input angle.
+    """
+    pca_dirs = model.l1.weight.detach().cpu().numpy()[:, :2]
+    t = np.linspace(0, 2 * np.pi, n, endpoint=False)
+    unit = np.stack([np.cos(t), np.sin(t)], axis=1)          # (n, 2)
+    h = np.maximum(unit @ pca_dirs.T, 0.0)                    # ReLU hidden response
+    f = h.mean(axis=1)                                        # average over hidden units
+
+    # least squares against a constant plus the second harmonic
+    design = np.stack([np.ones_like(t), np.cos(2 * t), np.sin(2 * t)], axis=1)
+    coef, *_ = np.linalg.lstsq(design, f, rcond=None)
+    fit = design @ coef
+    amp = float(np.hypot(coef[1], coef[2]))
+    phase = float(np.arctan2(-coef[2], coef[1]))
+    ss = 1 - np.var(f - fit) / np.var(f) if np.var(f) > 0 else float("nan")
+
+    fig, ax = plt.subplots(figsize=(8.0, 4.4))
+    ax.plot(t, f, lw=1.8, label="$f(\\cos t, \\sin t)$")
+    ax.plot(t, fit, lw=1.4, ls="--",
+            label=f"${amp:.3f}\\cos(2t {phase:+.2f})$ + const, FVE {ss * 100:.1f}%")
+    ax.set_xlabel("$t$")
+    ax.set_ylabel("mean hidden response")
+    ax.set_title("Fig. 26 analog -- second-harmonic fit, linear $\\beta$")
+    ax.legend(fontsize=9)
+    ax.grid(alpha=0.3)
+    return _save(fig, "fig26_second_harmonic_fit.png", outdir)
+
+
+# ------------------------------------------- Fig. 18-21: App. I setup variants
+
+def fig18_variant_metrics(runs: Sequence[dict], outdir=None) -> pathlib.Path:
+    """DI against GS, and each against alpha, for the GeLU / diff_vocab / eqn_sign runs."""
+    def variant(r):
+        c = r["config"]
+        if c.get("diff_vocab"):
+            return "diff_vocab"
+        if c.get("eqn_sign"):
+            return "eqn_sign"
+        return c.get("act_fn", "ReLU")
+
+    kinds = sorted({variant(r) for r in runs})
+    fig, axes = plt.subplots(1, 3, figsize=(16.0, 4.6))
+    for kind in kinds:
+        g = [r for r in runs if variant(r) == kind]
+        a = [r["config"]["attn_coeff"] for r in g]
+        axes[0].scatter([r["gs"] for r in g], [r["di"] for r in g], s=10, alpha=0.5, label=kind)
+        axes[1].scatter(a, [r["gs"] for r in g], s=10, alpha=0.5, label=kind)
+        axes[2].scatter(a, [r["di"] for r in g], s=10, alpha=0.5, label=kind)
+    axes[0].set_xlabel("gradient symmetricity")
+    axes[0].set_ylabel("distance irrelevance")
+    axes[1].set_xlabel("attention rate $\\alpha$")
+    axes[1].set_ylabel("gradient symmetricity")
+    axes[1].axhline(0.98, color="0.4", lw=1, ls="--")
+    axes[2].set_xlabel("attention rate $\\alpha$")
+    axes[2].set_ylabel("distance irrelevance")
+    axes[2].axhline(0.6, color="0.4", lw=1, ls="--")
+    for ax in axes:
+        ax.legend(fontsize=8)
+        ax.grid(alpha=0.25)
+    fig.suptitle(f"Fig. 18-19 analog -- setup variants, {len(runs)} runs")
+    return _save(fig, "fig18_variant_metrics.png", outdir)
+
+
+def fig20_aligned_embeddings(model, p: int = P, outdir=None) -> pathlib.Path:
+    """Fig. 20: with ``diff_vocab`` the two token tables are separate; plotted on the
+    same PCs they should still trace the same circle."""
+    from . import circles as C
+
+    W = model.embed.W_E.T.detach().cpu().double()
+    first, second = W[:p], W[p:2 * p]
+    mu = first.mean(dim=0)
+    _, _, Vt = torch.linalg.svd(first - mu, full_matrices=False)
+    pa = ((first - mu) @ Vt.T).numpy()
+    pb = ((second - mu) @ Vt.T).numpy()
+
+    fig, ax = plt.subplots(figsize=(6.2, 5.8))
+    ax.scatter(pa[:, 0], pa[:, 1], c="crimson", s=26, label="first-token table")
+    ax.scatter(pb[:, 0], pb[:, 1], c="tab:blue", s=26, marker="x", label="second-token table")
+    for t in range(p):
+        ax.annotate(str(t), (pa[t, 0], pa[t, 1]), fontsize=6, xytext=(3, 3),
+                    textcoords="offset points")
+    ax.set_xlabel("PC 1 (of the first-token table)")
+    ax.set_ylabel("PC 2")
+    ax.set_title("Fig. 20 analog -- aligned embeddings, `diff_vocab`")
+    ax.legend(fontsize=8)
+    ax.set_aspect("equal", adjustable="datalim")
+    return _save(fig, "fig20_aligned_embeddings.png", outdir)
+
+
+# ------------------------------------------------ Fig. 22-23: App. J-K training dynamics
+
+def fig22_isolation_over_training(checkpoints: Sequence[tuple[int, Any]], pcs=(0, 1),
+                                  outdir=None, tag: str = "clock") -> pathlib.Path:
+    """Correct-logit heatmap of one isolated PC pair at a sequence of training steps."""
+    from . import circles as C
+
+    data = make_dataset()
+    fig, axes = plt.subplots(1, len(checkpoints), figsize=(4.3 * len(checkpoints), 4.4),
+                             squeeze=False)
+    for ax, (step, model) in zip(axes[0], checkpoints):
+        pca = C.embedding_pca(model)
+        iso = C.isolated_model(model, list(pcs), pca=pca)
+        with torch.no_grad():
+            logits = iso.final_logits(data.inputs)
+        k = C.dominant_freq(pca.proj[:, pcs[0]])
+        im = ax.imshow(C.logit_heatmap(logits, k), cmap="Reds_r", aspect="auto")
+        acc = M.accuracy(logits, data.labels) * 100
+        ax.set_title(f"step {step}  (k = {k}, {acc:.1f}%)")
+        ax.set_xlabel("(a + b) mod p")
+        ax.set_ylabel(f"(a - b) / {C.delta_from_k(k)} mod p")
+        fig.colorbar(im, ax=ax)
+    fig.suptitle(f"Fig. 22-23 analog -- PCs {pcs[0] + 1},{pcs[1] + 1} isolated over training "
+                 f"({tag})")
+    return _save(fig, f"fig22_isolation_over_training_{tag}.png", outdir)
+
+
+def fig23_training_curves(histories: dict[str, dict], outdir=None) -> pathlib.Path:
+    """Train/validation loss and accuracy against step, from the saved histories."""
+    fig, axes = plt.subplots(1, 2, figsize=(12.4, 4.6))
+    for label, h in histories.items():
+        axes[0].plot(h["step"], h["train_loss"], lw=1.2, label=f"{label} train")
+        axes[0].plot(h["step"], h["val_loss"], lw=1.2, ls="--", label=f"{label} val")
+        axes[1].plot(h["step"], h["train_acc"], lw=1.2, label=f"{label} train")
+        axes[1].plot(h["step"], h["val_acc"], lw=1.2, ls="--", label=f"{label} val")
+    axes[0].set_yscale("log")
+    axes[0].set_xlabel("step")
+    axes[0].set_ylabel("cross-entropy")
+    axes[1].set_xlabel("step")
+    axes[1].set_ylabel("accuracy")
+    for ax in axes:
+        ax.legend(fontsize=7)
+        ax.grid(alpha=0.25)
+    fig.suptitle("Fig. 23 analog -- training dynamics")
+    return _save(fig, "fig23_training_curves.png", outdir)

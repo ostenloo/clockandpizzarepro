@@ -25,27 +25,13 @@ from clockpizza import circles as C  # noqa: E402
 from clockpizza import metrics as M  # noqa: E402
 from clockpizza.data import make_dataset  # noqa: E402
 from clockpizza.metrics import P  # noqa: E402
+from clockpizza.summary import fmt_dist, iqr  # noqa: E402
 from clockpizza.train import (  # noqa: E402
     WEIGHTS_DIR, RunConfig, append_record, load_registry, load_run, registry_ids,
     train_ensemble,
 )
 
 EXPERIMENT = "E1"
-
-
-def iqr(xs: Sequence[float]) -> tuple[float, float]:
-    xs = sorted(xs)
-    if len(xs) < 4:
-        return (xs[0], xs[-1]) if xs else (float("nan"), float("nan"))
-    q = st.quantiles(xs, n=4)
-    return q[0], q[2]
-
-
-def fmt_dist(xs: Sequence[float]) -> str:
-    if not xs:
-        return "-"
-    lo, hi = iqr(xs)
-    return f"{st.median(xs):.4f} ({lo:.4f}-{hi:.4f}, n={len(xs)})"
 
 
 def representative(runs: list[dict[str, Any]]) -> Optional[dict[str, Any]]:
