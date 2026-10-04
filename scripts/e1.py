@@ -26,7 +26,8 @@ from clockpizza import metrics as M  # noqa: E402
 from clockpizza.data import make_dataset  # noqa: E402
 from clockpizza.metrics import P  # noqa: E402
 from clockpizza.train import (  # noqa: E402
-    RunConfig, append_record, load_registry, load_run, registry_ids, train_ensemble,
+    WEIGHTS_DIR, RunConfig, append_record, load_registry, load_run, registry_ids,
+    train_ensemble,
 )
 
 EXPERIMENT = "E1"
@@ -80,6 +81,10 @@ def train(seeds: int, chunk: int, device: Optional[str], steps: int) -> None:
         for rec in train_ensemble(batch, device=device, progress=True):
             append_record(rec)
         print(f"    done ({batch[0].steps} steps)", flush=True)
+
+
+def weights_present(run: dict[str, Any]) -> bool:
+    return (WEIGHTS_DIR / f"{run['run_id']}.pt").exists()
 
 
 def analyse(run: dict[str, Any], name: str) -> dict[str, Any]:
@@ -204,6 +209,12 @@ def main() -> int:
         rep = representative(groups[alpha])
         if rep is None:
             print(f"\n### {label}\n\nNo circular run with 100% validation accuracy.")
+            continue
+        if not weights_present(rep):
+            print(f"\n### {label}\n\n*Run `{rep['run_id']}` is in the registry but its "
+                  f"weights are not on this host (`{WEIGHTS_DIR}/{rep['run_id']}.pt`), so the "
+                  f"§9 analyses and figures are skipped. Run this on the training host, or "
+                  f"copy the checkpoints over.*")
             continue
         reps[alpha] = rep
         a = analyse(rep, label)
