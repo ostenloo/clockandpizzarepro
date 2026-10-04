@@ -1,0 +1,18 @@
+# Markdown files
+*.md
+*.MD
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+*.egg-info/
+
+# Run artifacts and fixtures
+runs/
+third_party/
+
+# Papers
+*.pdf
