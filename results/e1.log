@@ -1,0 +1,57 @@
+training 96 of 96 E1 runs in chunks of 48
+
+  chunk 1: E = 48 (alphas [0.0])
+  step      0  mean train 4.154e+00  mean val acc 0.017
+  step   2000  mean train 1.442e-07  mean val acc 1.000
+  step   4000  mean train 1.400e-07  mean val acc 1.000
+  step   6000  mean train 1.385e-07  mean val acc 1.000
+  step   8000  mean train 1.376e-07  mean val acc 1.000
+  step  10000  mean train 1.372e-07  mean val acc 1.000
+  step  12000  mean train 1.369e-07  mean val acc 1.000
+  step  14000  mean train 1.366e-07  mean val acc 1.000
+  step  16000  mean train 1.363e-07  mean val acc 1.000
+  step  18000  mean train 1.360e-07  mean val acc 1.000
+    done (20000 steps)
+  chunk 2: E = 48 (alphas [1.0])
+  step      0  mean train 4.116e+00  mean val acc 0.018
+  step   2000  mean train 1.565e-07  mean val acc 1.000
+  step   4000  mean train 1.513e-07  mean val acc 1.000
+  step   6000  mean train 1.497e-07  mean val acc 1.000
+  step   8000  mean train 1.489e-07  mean val acc 1.000
+  step  10000  mean train 1.483e-07  mean val acc 1.000
+  step  12000  mean train 1.479e-07  mean val acc 1.000
+  step  14000  mean train 1.476e-07  mean val acc 1.000
+  step  16000  mean train 1.473e-07  mean val acc 1.000
+  step  18000  mean train 1.471e-07  mean val acc 1.000
+    done (20000 steps)
+# E1 -- canonical Pizza vs Clock
+
+96 runs in the registry.
+
+## Metric distributions, median (IQR, n)
+
+| alpha | all finished | 100% validation | circular | GS (circular) | DI correct (circular) | DI top-wrong (circular) | circularity (all) |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 0.0 | 48 | 48 | 20 | 0.9938 (0.9924-0.9945, n=20) | 0.1994 (0.1505-0.3827, n=20) | 0.2670 (0.1887-0.4074, n=20) | 0.9938 (0.9557-0.9973, n=48) |
+| 1.0 | 48 | 48 | 20 | 0.3409 (0.2672-0.4146, n=20) | 0.7177 (0.6774-0.8227, n=20) | 0.7888 (0.7303-0.8666, n=20) | 0.9933 (0.9706-0.9977, n=48) |
+
+## Representative runs and §9 analyses
+Traceback (most recent call last):
+  File "/home/austin/clockandpizzarepro/scripts/e1.py", line 250, in <module>
+    raise SystemExit(main())
+                     ~~~~^^
+  File "/home/austin/clockandpizzarepro/scripts/e1.py", line 208, in main
+    a = analyse(rep, label)
+  File "/home/austin/clockandpizzarepro/scripts/e1.py", line 87, in analyse
+    model, _ = load_run(run["run_id"])
+               ~~~~~~~~^^^^^^^^^^^^^^^
+  File "/home/austin/clockandpizzarepro/clockpizza/train.py", line 366, in load_run
+    payload = torch.load(dir / f"{run_id}.pt", map_location="cpu")
+  File "/home/austin/clockandpizzarepro/.venv/lib/python3.13/site-packages/torch/serialization.py", line 1578, in load
+    raise pickle.UnpicklingError(_get_wo_message(str(e))) from None
+_pickle.UnpicklingError: Weights only load failed. This file can still be loaded, to do so you have two options, [1mdo those steps only if you trust the source of the checkpoint[0m. 
+	(1) In PyTorch 2.6, we changed the default value of the `weights_only` argument in `torch.load` from `False` to `True`. Re-running `torch.load` with `weights_only` set to `False` will likely succeed, but it can result in arbitrary code execution. Do it only if you got the file from a trusted source.
+	(2) Alternatively, to load with `weights_only=True` please check the recommended steps in the following error message.
+	WeightsUnpickler error: Unsupported global: GLOBAL torch.torch_version.TorchVersion was not an allowed global by default. Please use `torch.serialization.add_safe_globals([torch.torch_version.TorchVersion])` or the `torch.serialization.safe_globals([torch.torch_version.TorchVersion])` context manager to allowlist this global if you trust this class/function.
+
+Check the documentation of torch.load to learn more about types accepted by default with weights_only https://pytorch.org/docs/stable/generated/torch.load.html.

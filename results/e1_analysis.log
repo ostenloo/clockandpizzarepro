@@ -1,0 +1,90 @@
+# E1 -- canonical Pizza vs Clock
+
+96 runs in the registry.
+
+## Metric distributions, median (IQR, n)
+
+| alpha | all finished | 100% validation | circular | GS (circular) | DI correct (circular) | DI top-wrong (circular) | circularity (all) |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 0.0 | 48 | 48 | 20 | 0.9938 (0.9924-0.9945, n=20) | 0.1994 (0.1505-0.3827, n=20) | 0.2670 (0.1887-0.4074, n=20) | 0.9938 (0.9557-0.9973, n=48) |
+| 1.0 | 48 | 48 | 20 | 0.3409 (0.2672-0.4146, n=20) | 0.7177 (0.6774-0.8227, n=20) | 0.7888 (0.7303-0.8666, n=20) | 0.9933 (0.9706-0.9977, n=48) |
+
+## Representative runs and §9 analyses
+
+### Model A analog (Pizza, alpha = 0): run `bc3320fc30` (alpha = 0.0, seed 19)
+
+GS 0.9938, DI 0.1653, circularity 0.9961, label pizza.
+
+PC circle scores (first 14): 1.00 1.00 0.99 1.00 0.99 1.00 1.00 1.00 1.00 1.00 1.00 1.00 0.47 0.19
+
+| circle | k | delta | PCs | accompanies | accuracy alone | FVE clock | FVE pizza | FVE abs-diff | FVE A |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| #1 main | 3 | 20 | 1,2 | - | 22.87% | 75.48% | 98.96% | 98.10% | - |
+| #2 main | 10 | 6 | 3,4 | - | 24.65% | 74.42% | 97.19% | 96.34% | - |
+| #3 main | 15 | 4 | 5,6 | - | 20.05% | 75.22% | 97.63% | 96.78% | - |
+| #4 acc. | 6 | 10 | 7,8 | k=3 | 5.43% | - | - | - | 97.13% |
+| #5 acc. | 20 | 3 | 9,10 | k=10 | 7.18% | - | - | - | 94.47% |
+| #6 acc. | 29 | 2 | 11,12 | k=15 | 6.52% | - | - | - | 92.03% |
+
+| embedding kept | accuracy |
+| --- | --- |
+| all main circles | 97.76% |
+| all circles | 100.00% |
+| accompanying only | 13.56% |
+| full minus accompanying | 97.76% |
+| first three circles (PCs 1-6) | 97.76% |
+
+Main circle #1 per (a - b): 2 differences at 0%, max 45.8%.
+
+### Model B analog (Clock, alpha = 1): run `f9afb8f876` (alpha = 1.0, seed 24)
+
+GS 0.3649, DI 0.7238, circularity 0.9987, label clock.
+
+PC circle scores (first 14): 1.00 1.00 1.00 1.00 1.00 1.00 1.00 1.00 0.94 0.59 0.29 0.31 0.28 0.25
+
+| circle | k | delta | PCs | accompanies | accuracy alone | FVE clock | FVE pizza | FVE abs-diff | FVE A |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| #1 main | 7 | 17 | 1,2 | - | 20.08% | 90.59% | 74.07% | 73.31% | - |
+| #2 main | 25 | 26 | 3,4 | - | 8.73% | -22.77% | -29.75% | -30.05% | - |
+| #3 main | 8 | 22 | 5,6 | - | 5.14% | -54.49% | -48.99% | -49.21% | - |
+| #4 main | 16 | 11 | 7,8 | - | 2.24% | -100.01% | -100.01% | -100.01% | - |
+
+| embedding kept | accuracy |
+| --- | --- |
+| all main circles | 100.00% |
+| all circles | 100.00% |
+| first three circles (PCs 1-6) | 100.00% |
+
+Main circle #1 per (a - b): 0 differences at 0%, max 22.0%.
+
+## Targets
+
+| ID | quantity | paper | ours | band | verdict |
+| --- | --- | --- | --- | --- | --- |
+| T1 | alpha = 0: GS median | 0.9937 | 0.9938 | >= 0.98 | **pass** |
+| T10 | accompanying only: accuracy | 16.7% | 13.56% | <= 40% | **pass** |
+| T11 | all circles kept: accuracy | 100% | 100% | >= 99.9% | **pass** |
+| T12 | Clock, first three circles (PCs 1-6) kept: accuracy | 100% | 100% | >= 99.9% | **pass** |
+| T2 | alpha = 0: DI (correct) median | 0.17 | 0.1994 | <= 0.40 | **pass** |
+| T3 | alpha = 1: GS median | 0.3336 | 0.3409 | <= 0.75 | **pass** |
+| T4 | alpha = 1: DI (correct) median | 0.85 | 0.7177 | >= 0.60 | **pass** |
+| T6 | isolated circle FVE: pizza vs clock | 99.2% vs 75.4% | 97.19% | pizza >= 95 and clock <= 85 | **pass** |
+| T7 | accompanying circles: FVE of A | 97.2-97.7% | 92.03% | >= 90% | **pass** |
+| T8 | one circle kept: accuracy | 32.8% | 20.05% | 15-50% with 0% at some a-b | **pass** |
+| T9 | main circles kept: accuracy | 91.4% / 99.7% | 97.76% | >= 90% | **pass** |
+
+**All E1 targets in band.**
+
+Representative run ids written to `results/e1_representatives.json`.
+
+## Figures
+
+| figure | file |
+| --- | --- |
+| fig02_clock | `figures/fig02_gradient_symmetry_clock.png` |
+| fig02_pizza | `figures/fig02_gradient_symmetry_pizza.png` |
+| fig03_clock | `figures/fig03_correct_logits_clock.png` |
+| fig03_pizza | `figures/fig03_correct_logits_pizza.png` |
+| fig04 | `figures/fig04_main_circles.png` |
+| fig05 | `figures/fig05_accuracy_per_difference.png` |
+| fig13 | `figures/fig13_accompanying_circles.png` |
