@@ -74,7 +74,9 @@ def main() -> int:
 
     made = {}
     if not args.no_figures:
-        made["fig18"] = plots.fig18_variant_metrics(runs)
+        for kind in sorted({variant_of(r) for r in runs}):
+            number = plots.VARIANT_FIGURE.get(kind, 18)
+            made[f"fig{number:02d}_{kind}"] = plots.fig_variant_metrics(runs, kind)
         dv = [r for r in perfect(runs) if r["config"].get("diff_vocab")
               and r["di"] < 0.4 and r["gs"] > 0.98]
         if dv:

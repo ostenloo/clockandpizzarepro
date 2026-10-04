@@ -512,6 +512,41 @@ def fig16_linear_isolation(models: dict, outdir=None) -> pathlib.Path:
 
 # ------------------------------------------------------ Fig. 24-26: App. L, the linear beta
 
+def fig24_second_relu(model, outdir=None) -> pathlib.Path:
+    """App. L / Fig. 24: per-pair correct logits with and without the second ReLU.
+
+    If the second ReLU is doing nothing, the two agree along y = x and the loss does
+    not rise.
+    """
+    data = make_dataset()
+    with torch.no_grad():
+        on = model(data.inputs, second_relu=True)
+        off = model(data.inputs, second_relu=False)
+    correct = data.labels
+    idx = torch.arange(len(data))
+    y_on = on[idx, correct].double().numpy()
+    y_off = off[idx, correct].double().numpy()
+    acc_on = M.accuracy(on, correct) * 100
+    acc_off = M.accuracy(off, correct) * 100
+
+    fig, axes = plt.subplots(1, 2, figsize=(12.0, 4.8))
+    lim = [min(y_on.min(), y_off.min()), max(y_on.max(), y_off.max())]
+    axes[0].plot(lim, lim, color="0.6", ls="--", lw=1, label="y = x")
+    axes[0].scatter(y_on, y_off, s=5, alpha=0.3, color="tab:blue")
+    axes[0].set_xlabel("correct logit, second ReLU kept")
+    axes[0].set_ylabel("correct logit, second ReLU removed")
+    axes[0].set_title(f"accuracy {acc_on:.2f}% vs {acc_off:.2f}%")
+    axes[0].legend(fontsize=8)
+    axes[1].hist(y_off - y_on, bins=60, color="tab:blue", alpha=0.85)
+    axes[1].set_xlabel("change in the correct logit")
+    axes[1].set_ylabel("pairs")
+    axes[1].set_title("effect of removing the second ReLU")
+    for ax in axes:
+        ax.grid(alpha=0.25)
+    fig.suptitle("Fig. 24 analog -- the linear $\\beta$ model without its second ReLU")
+    return _save(fig, "fig24_second_relu.png", outdir)
+
+
 def fig25_aligned_weights(model, outdir=None) -> pathlib.Path:
     """W1 and W2 of a linear beta run, rows ordered by the phase they respond to."""
     W1 = model.l1.weight.detach().cpu().numpy()
@@ -563,37 +598,52 @@ def fig26_second_harmonic_fit(model, outdir=None, n: int = 721) -> pathlib.Path:
 
 # ------------------------------------------- Fig. 18-21: App. I setup variants
 
-def fig18_variant_metrics(runs: Sequence[dict], outdir=None) -> pathlib.Path:
-    """DI against GS, and each against alpha, for the GeLU / diff_vocab / eqn_sign runs."""
-    def variant(r):
-        c = r["config"]
-        if c.get("diff_vocab"):
-            return "diff_vocab"
-        if c.get("eqn_sign"):
-            return "eqn_sign"
-        return c.get("act_fn", "ReLU")
+VARIANT_FIGURE = {"GeLU": 18, "diff_vocab": 19, "eqn_sign": 21}
 
-    kinds = sorted({variant(r) for r in runs})
+
+def variant_of(run: dict) -> str:
+    c = run["config"]
+    if c.get("diff_vocab"):
+        return "diff_vocab"
+    if c.get("eqn_sign"):
+        return "eqn_sign"
+    return c.get("act_fn", "ReLU")
+
+
+def fig_variant_metrics(runs: Sequence[dict], kind: str, outdir=None) -> pathlib.Path:
+    """One setup variant: DI against GS, and each against alpha.
+
+    The paper gives each variant its own figure (18 GeLU, 19 diff_vocab, 21 eqn_sign),
+    so this is called once per variant rather than overlaying them.
+    """
+    g = [r for r in runs if variant_of(r) == kind]
+    number = VARIANT_FIGURE.get(kind, 18)
+    alpha = [r["config"]["attn_coeff"] for r in g]
+
     fig, axes = plt.subplots(1, 3, figsize=(16.0, 4.6))
-    for kind in kinds:
-        g = [r for r in runs if variant(r) == kind]
-        a = [r["config"]["attn_coeff"] for r in g]
-        axes[0].scatter([r["gs"] for r in g], [r["di"] for r in g], s=10, alpha=0.5, label=kind)
-        axes[1].scatter(a, [r["gs"] for r in g], s=10, alpha=0.5, label=kind)
-        axes[2].scatter(a, [r["di"] for r in g], s=10, alpha=0.5, label=kind)
+    axes[0].scatter([r["gs"] for r in g], [r["di"] for r in g], s=10, alpha=0.55,
+                    color="tab:blue")
     axes[0].set_xlabel("gradient symmetricity")
     axes[0].set_ylabel("distance irrelevance")
+    axes[1].scatter(alpha, [r["gs"] for r in g], s=10, alpha=0.55, color="tab:blue")
     axes[1].set_xlabel("attention rate $\\alpha$")
     axes[1].set_ylabel("gradient symmetricity")
     axes[1].axhline(0.98, color="0.4", lw=1, ls="--")
+    axes[2].scatter(alpha, [r["di"] for r in g], s=10, alpha=0.55, color="tab:blue")
     axes[2].set_xlabel("attention rate $\\alpha$")
     axes[2].set_ylabel("distance irrelevance")
     axes[2].axhline(0.6, color="0.4", lw=1, ls="--")
+    for ax, key, thresh, above in ((axes[1], "gs", 0.98, True), (axes[2], "di", 0.6, False)):
+        y = np.array([r[key] for r in g])
+        b = logistic_boundary(np.array(alpha), (y > thresh) if above else (y < thresh))
+        if b is not None:
+            ax.axvline(b["alpha_star"], color="crimson", lw=1.6,
+                       label=f"$\\alpha^*$ = {b['alpha_star']:.2f}")
+            ax.legend(fontsize=8)
     for ax in axes:
-        ax.legend(fontsize=8)
         ax.grid(alpha=0.25)
-    fig.suptitle(f"Fig. 18-19 analog -- setup variants, {len(runs)} runs")
-    return _save(fig, "fig18_variant_metrics.png", outdir)
+    fig.suptitle(f"Fig. {number} analog -- `{kind}`, {len(g)} runs")
+    return _save(fig, f"fig{number:02d}_variant_{kind}.png", outdir)
 
 
 def fig20_aligned_embeddings(model, p: int = P, outdir=None) -> pathlib.Path:

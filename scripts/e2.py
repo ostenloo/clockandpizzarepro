@@ -23,7 +23,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 from clockpizza import plots  # noqa: E402
 from clockpizza.sweeps import e2_configs, run as run_sweep  # noqa: E402
 from clockpizza.summary import fmt_dist, iqr  # noqa: E402
-from clockpizza.train import load_registry  # noqa: E402
+from clockpizza.train import load_registry, load_run  # noqa: E402
 
 EXPERIMENT = "E2"
 
@@ -149,6 +149,21 @@ def main() -> int:
         }
         if circular:
             made["fig07_top"] = plots.fig07_phase_boundary(circular, tag="top")
+        # §10: "Fig. 9 shows PC plots of two non-circular E2 runs"
+        non_circular = sorted((r for r in perfect if not r["circular"]),
+                              key=lambda r: r["circularity"])[:2]
+        models, labels = [], []
+        for r in non_circular:
+            try:
+                models.append(load_run(r["run_id"])[0])
+            except FileNotFoundError:
+                continue
+            labels.append(f"seed {r['seed']}, $\\alpha$={r['config']['attn_coeff']:.2f}, "
+                          f"c={r['circularity']:.2f}")
+        if models:
+            made["fig09"] = plots.fig09_pc_plots(models, labels)
+        elif non_circular:
+            print("\n*Fig. 9 skipped: weights for the non-circular runs are not on this host.*")
         for key, path in sorted(made.items()):
             print(f"| {key} | `{path}` |")
 

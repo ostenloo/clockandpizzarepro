@@ -119,6 +119,7 @@ def main() -> int:
 
     made = {}
     if not args.no_figures:
+        made["fig24"] = plots.fig24_second_relu(model)
         made["fig25"] = plots.fig25_aligned_weights(model)
         made["fig26"] = plots.fig26_second_harmonic_fit(model)
     print_figures(made)
