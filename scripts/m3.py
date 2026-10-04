@@ -24,14 +24,20 @@ E1_RUNS, E2_RUNS, E3_RUNS = 96, 2400, 1200  # 48 seeds x 2 alphas; §10 run coun
 BUDGET_HOURS = 12.0
 
 
-def measure(n_members: int, steps: int, d_model: int, device: str) -> dict:
-    cfgs = [RunConfig(seed=1000 + i, attn_coeff=i / max(n_members - 1, 1), steps=steps,
-                      d_model=d_model, log_every=10 ** 9, experiment="m3-throughput")
-            for i in range(n_members)]
+def measure(n_members: int, steps: int, d_model: int, device: str, warmup: int = 50) -> dict:
+    """Time ``steps`` optimizer steps after a ``warmup`` run, so CUDA context creation,
+    kernel autotuning and allocator growth are not charged to the measurement."""
+    def build(n_steps):
+        return [RunConfig(seed=1000 + i, attn_coeff=i / max(n_members - 1, 1), steps=n_steps,
+                          d_model=d_model, log_every=10 ** 9, experiment="m3-throughput")
+                for i in range(n_members)]
+
+    train_ensemble(build(warmup), device=device, save_weights=False)
     if device == "cuda":
         torch.cuda.synchronize()
+        torch.cuda.reset_peak_memory_stats()
     t0 = time.perf_counter()
-    train_ensemble(cfgs, device=device, save_weights=False)
+    train_ensemble(build(steps), device=device, save_weights=False)
     if device == "cuda":
         torch.cuda.synchronize()
     wall = time.perf_counter() - t0
@@ -43,7 +49,8 @@ def measure(n_members: int, steps: int, d_model: int, device: str) -> dict:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--steps", type=int, default=200)
+    ap.add_argument("--steps", type=int, default=500)
+    ap.add_argument("--warmup", type=int, default=50)
     ap.add_argument("--members", type=int, nargs="+", default=[1, 8, 32, 64, 128])
     ap.add_argument("--d-model", type=int, default=128)
     ap.add_argument("--device", default=None)
@@ -51,7 +58,8 @@ def main() -> int:
     device = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
     set_precision()
 
-    print(f"### Ensemble throughput (d = {args.d_model}, {args.steps} steps, {device})\n")
+    print(f"### Ensemble throughput (d = {args.d_model}, {args.steps} steps "
+          f"after {args.warmup} warmup steps, {device})\n")
     print("| members | wall | s / step | projected s per 20k-step run | peak memory |")
     print("| --- | --- | --- | --- | --- |")
     rows = []
@@ -59,7 +67,7 @@ def main() -> int:
         if device == "cuda":
             torch.cuda.reset_peak_memory_stats()
         try:
-            row = measure(n, args.steps, args.d_model, device)
+            row = measure(n, args.steps, args.d_model, device, warmup=args.warmup)
         except torch.cuda.OutOfMemoryError:
             print(f"| {n} | out of memory | - | - | - |")
             torch.cuda.empty_cache()
