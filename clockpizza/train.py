@@ -312,9 +312,11 @@ def train_ensemble(
 def versions() -> dict[str, str]:
     import numpy
 
+    # str() matters: torch.__version__ is a TorchVersion, which torch.load refuses
+    # under weights_only=True when it is pickled into a checkpoint payload.
     return dict(
         python=sys.version.split()[0],
-        torch=torch.__version__,
+        torch=str(torch.__version__),
         cuda=str(torch.version.cuda),
         numpy=numpy.__version__,
         platform=platform.platform(),
@@ -363,6 +365,9 @@ def load_registry(path: pathlib.Path = REGISTRY) -> list[dict[str, Any]]:
 
 def load_run(run_id: str, dir: pathlib.Path = WEIGHTS_DIR) -> tuple[Transformer, dict[str, Any]]:
     """Rebuild a saved run's model from ``runs/<run_id>.pt``."""
+    # Runs saved before versions() cast the torch version to str carry a TorchVersion
+    # in their metrics; allow it so those checkpoints still load under weights_only.
+    torch.serialization.add_safe_globals([torch.torch_version.TorchVersion])
     payload = torch.load(dir / f"{run_id}.pt", map_location="cpu")
     cfg = RunConfig(**payload["config"])
     model = cfg.build()
