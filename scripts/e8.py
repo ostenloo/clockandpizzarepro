@@ -62,6 +62,15 @@ def main() -> int:
     made = {}
 
     # ------------------------------------------- App. K: removing the accompanying circle
+    # An earlier E8 pass used a sparser checkpoint grid; those runs are still in the
+    # registry under different ids. Keep, per (seed, alpha), whichever has more steps.
+    best: dict[tuple, dict] = {}
+    for r in runs:
+        key = (r["seed"], r["config"]["attn_coeff"])
+        if len(r["config"].get("checkpoint_steps", ())) > \
+                len(best.get(key, {}).get("config", {}).get("checkpoint_steps", ())):
+            best[key] = r
+    runs = sorted(best.values(), key=lambda r: (r["config"]["attn_coeff"], r["seed"]))
     pizza_runs = [r for r in runs if r["config"]["attn_coeff"] == 0.0]
     print("## App. K -- removing the accompanying circle\n")
     print("A drop needs an accompanying circle to remove. The paper looks at step 600; "
@@ -71,6 +80,7 @@ def main() -> int:
     print("| run | seed | step | circles (main + accompanying) | all circles "
           "| main circles only | drop |")
     print("| --- | --- | --- | --- | --- | --- | --- |")
+    drops: list[tuple[int, float]] = []
     for r in sorted(pizza_runs, key=lambda r: r["seed"]):
         for step in r["config"].get("checkpoint_steps", ()):
             try:
@@ -91,11 +101,26 @@ def main() -> int:
 
             with_all = accuracy_of(C.circle_pcs(main + acc))
             without = accuracy_of(C.circle_pcs(main))
+            if acc:
+                drops.append((step, with_all - without))
             drop = "-" if not acc else f"{with_all - without:+.2f}"
             print(f"| `{r['run_id']}` | {r['seed']} | {step} | {len(main)} + {len(acc)} "
                   f"| {with_all:.2f}% | {without:.2f}% | {drop} |")
     print(f"\nApp. K reports {APP_K_WITH}% falling to {APP_K_WITHOUT}% "
           f"(a drop of {APP_K_WITH - APP_K_WITHOUT:.1f} points).")
+    if drops:
+        import statistics as st
+
+        at_600 = [d for step, d in drops if step == 600]
+        print(f"\nAcross {len(drops)} checkpoints that had an accompanying circle to "
+              f"remove, the drop was positive in {sum(d > 0 for _, d in drops)} of them, "
+              f"median {st.median(d for _, d in drops):+.2f} points "
+              f"(range {min(d for _, d in drops):+.2f} to {max(d for _, d in drops):+.2f}).")
+        print(f"At step 600 specifically -- the step App. K uses -- "
+              f"{'no run had' if not at_600 else f'{len(at_600)} runs had'} an "
+              f"accompanying circle yet, so the paper's comparison cannot be made there "
+              f"on these runs. The structure appears between steps "
+              f"{min(step for step, _ in drops)} and {max(step for step, _ in drops)}.")
 
     # --------------------------------------------------- Fig. 22-23: isolation over time
     if not args.no_figures:
